@@ -1,0 +1,14 @@
+[package]
+name = "typed-pdf"
+version = "0.1.0"
+authors = ["Mark Catley <mark@catley.net.nz>"]
+edition = "2018"
+description = "A nursery of additional types for PDF-RS (https://github.com/pdf-rs/pdf)."
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+pdf = "*"
+itertools = "*"
+structopt = "*"
