@@ -210,7 +210,7 @@ pub struct FontInfo {
     pub cmap: HashMap<u16, String>
 }
 
-fn normalize_string<'a>(text: &'a PdfString, current_font: Option<&FontInfo>) -> pdf::error::Result<Cow<'a, str>> {
+fn decode_string<'a>(text: &'a PdfString, current_font: Option<&FontInfo>) -> pdf::error::Result<Cow<'a, str>> {
     match current_font {
         Some(cf) => match cf.font.encoding() {
             Some(encoding) => {
@@ -644,7 +644,7 @@ pub fn normalize_operation_with_font<'a>(operation: &'a PdfOperation, current_fo
             }
         }
         ("Tj", [Primitive::String(text)]) => {
-            normalize_string(text, current_font)
+            decode_string(text, current_font)
                 .map(Operation::ShowText)
                 .unwrap_or_else(|_| Operation::Unknown { operator, operands })
         },
@@ -653,7 +653,7 @@ pub fn normalize_operation_with_font<'a>(operation: &'a PdfOperation, current_fo
                 .iter()
                 .filter_map(|primitive| match primitive {
                     Primitive::String(string) => {
-                        normalize_string(string, current_font).ok().map(TextOrGlyphPositioning::Text)
+                        decode_string(string, current_font).ok().map(TextOrGlyphPositioning::Text)
                     }
                     Primitive::Number(glyph_positioning) => {
                         Some(TextOrGlyphPositioning::GlyphPositioning(*glyph_positioning))
@@ -746,14 +746,14 @@ pub fn normalize_operation_with_font<'a>(operation: &'a PdfOperation, current_fo
                 Operation::Unknown { operator, operands }
             }
         }
-        ("'", [Primitive::String(text)]) => normalize_string(text, current_font)
+        ("'", [Primitive::String(text)]) => decode_string(text, current_font)
             .map(Operation::MoveToNextLineAndShowText)
             .unwrap_or_else(|_| Operation::Unknown { operator, operands }),
         ("\"", [word_spacing, character_spacing, Primitive::String(text)]) => {
             if let (Some(word_spacing), Some(character_spacing), Ok(text)) = (
                 word_spacing.try_to_f(),
                 character_spacing.try_to_f(),
-                normalize_string(text, current_font),
+                decode_string(text, current_font),
             ) {
                 Operation::SetWordAndCharacterSpacingMoveToNextLineAndShowText {
                     word_spacing,
