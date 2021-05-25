@@ -1,6 +1,12 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::convert::TryInto;
 
 use pdf::{content::Operation as PdfOperation, primitive::Primitive};
+use pdf::encoding::BaseEncoding;
+use pdf::font::Font;
+use pdf::object::RcRef;
+use pdf::primitive::PdfString;
 
 pub struct Name<'src>(&'src str);
 
@@ -199,7 +205,50 @@ impl PrimitiveExt for Primitive {
     }
 }
 
+pub struct FontInfo {
+    pub font: RcRef<Font>,
+    pub cmap: HashMap<u16, String>
+}
+
+fn decode_string<'a>(text: &'a PdfString, current_font: Option<&FontInfo>) -> pdf::error::Result<Cow<'a, str>> {
+    match current_font {
+        Some(cf) => match cf.font.encoding() {
+            Some(encoding) => {
+                match encoding.base {
+                    BaseEncoding::IdentityH => {
+                        let mut out: String = "".to_string();
+                        for w in text.as_bytes().windows(2) {
+                            let cp = u16::from_be_bytes(w.try_into().unwrap());
+                            if let Some(s) = cf.cmap.get(&cp) {
+                                out.push_str(s);
+                            }
+                        }
+                        Ok(Cow::from(out))
+                    }
+                    _ => {
+                        let mut out: String = "".to_string();
+                        for &b in text.as_bytes() {
+                            if let Some(s) = cf.cmap.get(&(b as u16)) {
+                                out.push_str(s);
+                            } else {
+                                out.push(b as char);
+                            }
+                        }
+                        Ok(Cow::from(out))
+                    }
+                }
+            }
+            None => text.as_str()
+        }
+        None => text.as_str()
+    }
+}
+
 pub fn normalize_operation(operation: &PdfOperation) -> Operation {
+    normalize_operation_with_font(operation, None)
+}
+
+pub fn normalize_operation_with_font<'a>(operation: &'a PdfOperation, current_font: Option<&FontInfo>) -> Operation<'a> {
     let PdfOperation { operator, operands } = operation;
 
     match (operator.as_str(), operands.as_slice()) {
@@ -594,16 +643,17 @@ pub fn normalize_operation(operation: &PdfOperation) -> Operation {
                 size: *size as f32,
             }
         }
-        ("Tj", [Primitive::String(text)]) => text
-            .as_str()
-            .map(Operation::ShowText)
-            .unwrap_or_else(|_| Operation::Unknown { operator, operands }),
+        ("Tj", [Primitive::String(text)]) => {
+            decode_string(text, current_font)
+                .map(Operation::ShowText)
+                .unwrap_or_else(|_| Operation::Unknown { operator, operands })
+        },
         ("TJ", [Primitive::Array(primitive_array)]) => {
             let array = primitive_array
                 .iter()
                 .filter_map(|primitive| match primitive {
                     Primitive::String(string) => {
-                        string.as_str().ok().map(TextOrGlyphPositioning::Text)
+                        decode_string(string, current_font).ok().map(TextOrGlyphPositioning::Text)
                     }
                     Primitive::Number(glyph_positioning) => {
                         Some(TextOrGlyphPositioning::GlyphPositioning(*glyph_positioning))
@@ -696,15 +746,14 @@ pub fn normalize_operation(operation: &PdfOperation) -> Operation {
                 Operation::Unknown { operator, operands }
             }
         }
-        ("'", [Primitive::String(text)]) => text
-            .as_str()
+        ("'", [Primitive::String(text)]) => decode_string(text, current_font)
             .map(Operation::MoveToNextLineAndShowText)
             .unwrap_or_else(|_| Operation::Unknown { operator, operands }),
         ("\"", [word_spacing, character_spacing, Primitive::String(text)]) => {
             if let (Some(word_spacing), Some(character_spacing), Ok(text)) = (
                 word_spacing.try_to_f(),
                 character_spacing.try_to_f(),
-                text.as_str(),
+                decode_string(text, current_font),
             ) {
                 Operation::SetWordAndCharacterSpacingMoveToNextLineAndShowText {
                     word_spacing,
